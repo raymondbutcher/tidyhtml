@@ -152,6 +152,12 @@ func (t tidy) render(n *html.Node) (out []byte, err error) {
 
 // Lower level functions for writing to the output:
 
+func (t *tidy) write(w *bufio.Writer, p []byte) {
+	if t.err == nil {
+		_, t.err = w.Write(p)
+	}
+}
+
 func (t *tidy) writeByte(w *bufio.Writer, c byte) {
 	if t.err == nil {
 		t.err = w.WriteByte(c)
@@ -306,43 +312,46 @@ func (t *tidy) writeText(w *bufio.Writer, n *html.Node) {
 	if t.textBlock == -1 {
 		return
 	}
+	input := bytes.TrimSpace([]byte(n.Data))
 
-	var left, right bool
+	if len(input) == 0 {
+		if n.PrevSibling != nil || n.NextSibling != nil {
+			t.writeByte(w, ' ')
+			return
+		}
+	}
+
 	if n.PrevSibling != nil && unicode.IsSpace(rune(n.Data[0])) {
-		left = true
-	}
-	if n.NextSibling != nil && unicode.IsSpace(rune(n.Data[len(n.Data)-1])) {
-		right = true
-	}
-
-	text := strings.TrimSpace(n.Data)
-
-	if len(text) == 0 && (left || right) {
-		t.writeByte(w, ' ')
-		return
-	}
-
-	if left {
 		t.writeByte(w, ' ')
 	}
 
-	for i, line := range strings.SplitAfter(text, "\n") {
-		if len(strings.TrimSpace(line)) == 0 {
-			continue
-		}
-		if i != 0 {
-			// Indent minus one so it lines up with the parent tag.
-			for i := 0; i < t.indent-1; i++ {
-				t.writeString(w, "    ")
+	if n.NextSibling != nil && unicode.IsSpace(rune(n.Data[len(input)-1])) {
+		defer t.writeByte(w, ' ')
+	}
+
+	for {
+		i := bytes.IndexFunc(input, unicode.IsSpace)
+		if i == -1 {
+			// There is no more whitespace, write what is left.
+			t.write(w, input)
+			break
+		} else if i == 0 {
+			// This is whitespace, write 1 space and move
+			// forward to the next non-whitespace character.
+			t.writeByte(w, ' ')
+			i = bytes.IndexFunc(input, isNotSpace)
+			if i == -1 {
+				// Only trailing whitespace is left.
+				break
 			}
+			input = input[i:]
+		} else {
+			// There is some whitespace further ahead. Write the characters
+			// up to that whitespace and move the position accordingly.
+			t.write(w, input[:i])
+			input = input[i:]
 		}
-		t.writeString(w, line)
 	}
-
-	if right {
-		t.writeByte(w, ' ')
-	}
-
 }
 
 // Other helper functions:
