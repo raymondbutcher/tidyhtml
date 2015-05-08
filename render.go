@@ -240,6 +240,17 @@ func (t *tidy) writeEl(w *bufio.Writer, n *html.Node) {
 
 	if t.preBlock == -1 && n.Data == "pre" {
 		t.preBlock = t.indent
+		// Add a comment as an indentation guide.
+		if !isPreNode(getPrevElement(n)) {
+			if t.indent >= 2 {
+				t.writeString(w, "<!--")
+				for i := 1; i < t.indent; i++ {
+					t.writeString(w, " <==")
+				}
+				t.writeString(w, " -->")
+			}
+			t.writeByte(w, '\n')
+		}
 	}
 
 	if t.preBlock == -1 {
@@ -275,10 +286,6 @@ func (t *tidy) writeEl(w *bufio.Writer, n *html.Node) {
 
 func (t *tidy) writeElClose(w *bufio.Writer, n *html.Node) {
 
-	if n.Data == "pre" && t.preBlock == t.indent {
-		//t.preBlock = -1
-	}
-
 	if t.textBlock == -1 && t.preBlock == -1 && hasChild(n) {
 		for i := 0; i < t.indent; i++ {
 			t.writeString(w, "    ")
@@ -288,6 +295,18 @@ func (t *tidy) writeElClose(w *bufio.Writer, n *html.Node) {
 		t.writeString(w, "</")
 		t.writeString(w, n.Data)
 		t.writeByte(w, '>')
+	}
+
+	if n.Data == "pre" && !isPreNode(n.NextSibling) {
+		t.writeByte(w, '\n')
+		// Add a comment as an indentation guide.
+		if t.indent >= 2 {
+			t.writeString(w, "<!--")
+			for i := 1; i < t.indent; i++ {
+				t.writeString(w, " ==>")
+			}
+			t.writeString(w, " -->")
+		}
 	}
 
 	if t.preBlock != -1 && n.Data != "pre" {

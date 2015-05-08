@@ -7,6 +7,22 @@ import (
 	"golang.org/x/net/html"
 )
 
+// getPrevElement gets the previous sibling if it is an element,
+// or returns nil. It skips past blank text nodes during this check.
+func getPrevElement(n *html.Node) *html.Node {
+	for n != nil {
+		n = n.PrevSibling
+		if isBlankText(n) {
+			continue
+		}
+		if n == nil || n.Type != html.ElementNode {
+			return nil
+		}
+		return n
+	}
+	return nil
+}
+
 func isNotSpace(r rune) bool {
 	return !unicode.IsSpace(r)
 }
@@ -31,21 +47,25 @@ func hasText(n *html.Node) bool {
 	return false
 }
 
+func isBlankText(n *html.Node) bool {
+	if n != nil && n.Type == html.TextNode {
+		if strings.IndexFunc(n.Data, isNotSpace) == -1 {
+			return true
+		}
+	}
+	return false
+}
+
+func isPreNode(n *html.Node) bool {
+	return n != nil && n.Type == html.ElementNode && n.Data == "pre"
+}
+
 func isTextBlock(n *html.Node) bool {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.TextNode {
 			if strings.IndexFunc(c.Data, isNotSpace) >= 0 {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func isBlankText(n *html.Node) bool {
-	if n != nil && n.Type == html.TextNode {
-		if strings.IndexFunc(n.Data, isNotSpace) == -1 {
-			return true
 		}
 	}
 	return false
