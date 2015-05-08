@@ -344,7 +344,7 @@ func (t *tidy) writeText(w *bufio.Writer, n *html.Node) {
 		t.writeByte(w, ' ')
 	}
 
-	if n.NextSibling != nil && unicode.IsSpace(rune(n.Data[len(input)-1])) {
+	if n.NextSibling != nil && unicode.IsSpace(rune(n.Data[len(n.Data)-1])) {
 		defer t.writeByte(w, ' ')
 	}
 
