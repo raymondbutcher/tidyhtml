@@ -1,5 +1,7 @@
 # tidyhtml
 
+[![GoDoc](https://godoc.org/github.com/raymondbutcher/tidyhtml?status.svg)](https://godoc.org/github.com/raymondbutcher/tidyhtml)
+
 This is a Go package for making HTML look tidy.
 
 And by "tidy" I mean "exactly as I would write it by hand".
@@ -43,7 +45,7 @@ func main() {
 
 ### Example
 
-```
+```html
 $ cat demo.in.html
 <html>
 <head>
@@ -58,7 +60,7 @@ ok
 </body></html>
 ```
 
-```
+```html
 $ cat demo.in.html | tidyhtml
 <html>
     <head>
