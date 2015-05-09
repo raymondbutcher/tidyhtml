@@ -97,6 +97,40 @@ func GetTestFiles() (testFiles []TestFile) {
 	return
 }
 
+func ExampleCopy() {
+	r := strings.NewReader(`
+		<html>
+		<head>
+		<title>demo</title>
+		</head>
+		<body>
+		<div><h1>this is a demo</h1>
+		<p>
+		ok
+		</p>
+		<div><span>this will do</span></div></div>
+		</body></html>
+	`)
+	if err := Copy(os.Stdout, r); err != nil {
+		fmt.Printf("Error: %s", err)
+	}
+	// Output:
+	// <html>
+	//     <head>
+	//         <title>demo</title>
+	//     </head>
+	//     <body>
+	//         <div>
+	//             <h1>this is a demo</h1>
+	//             <p>ok</p>
+	//             <div>
+	//                 <span>this will do</span>
+	//             </div>
+	//         </div>
+	//     </body>
+	// </html>
+}
+
 func TestCopy(t *testing.T) {
 	for _, tf := range GetTestFiles() {
 
