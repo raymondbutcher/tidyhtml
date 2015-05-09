@@ -38,7 +38,31 @@ func newTidy() tidy {
 	}
 }
 
-func (t tidy) render(n *html.Node) (out []byte, err error) {
+// inNormalBlock - is the current node a regular non-pre non-text block?
+func (t *tidy) inNormalBlock() bool {
+	if t.inPreBlock() || t.inTextBlock() {
+		return false
+	}
+	return true
+}
+
+// inPreBlock - is the current node within a pre block?
+func (t *tidy) inPreBlock() bool {
+	return t.preBlock != -1
+}
+
+// inTextBlock - is the current node within a text block?
+func (t *tidy) inTextBlock() bool {
+	return t.textBlock != -1
+}
+
+// isTextBlock - is the current node the start of the text block?
+func (t *tidy) isTextBlock() bool {
+	return t.textBlock == t.indent
+}
+
+// Render the node and all related nodes to HTML.
+func (t *tidy) render(n *html.Node) (out []byte, err error) {
 
 	buf := bytes.Buffer{}
 	w := bufio.NewWriter(&buf)
@@ -54,7 +78,7 @@ func (t tidy) render(n *html.Node) (out []byte, err error) {
 	for n != nil {
 
 		// Remove blank text nodes when not in a text/pre block.
-		if t.textBlock == -1 && t.preBlock == -1 {
+		if t.inNormalBlock() {
 			for s := n.NextSibling; isBlankText(s); s = n.NextSibling {
 				n.NextSibling = s.NextSibling
 			}
@@ -63,17 +87,20 @@ func (t tidy) render(n *html.Node) (out []byte, err error) {
 		switch n.Type {
 		case html.ElementNode:
 
-			// The <noscript> elements are parsed as plain text.
-			// Convert them into HTML nodes so they can be tidied.
-			if n.Data == "noscript" {
+			switch n.Data {
+			case "noscript":
+				// The <noscript> elements are parsed as plain text.
+				// Convert them into HTML nodes so they can be tidied.
 				t.err = parseTextNode(n)
+			case "pre":
+				if !t.inPreBlock() {
+					t.preBlock = t.indent
+				}
 			}
 
 			// Start a new text block?
-			if t.textBlock == -1 {
-				if isTextBlock(n) {
-					t.textBlock = t.indent
-				}
+			if t.inNormalBlock() && isTextBlock(n) {
+				t.textBlock = t.indent
 			}
 
 			// Write the start of the element.
@@ -113,12 +140,13 @@ func (t tidy) render(n *html.Node) (out []byte, err error) {
 			return
 		}
 
-		if n.NextSibling != nil {
-			n = n.NextSibling
-			continue
-		}
-
 		for n != nil {
+			// Move across to the next sibling if there is one.
+			if n.NextSibling != nil {
+				n = n.NextSibling
+				break
+			}
+
 			// Move upwards to the parent.
 			n = n.Parent
 			t.indent--
@@ -130,13 +158,6 @@ func (t tidy) render(n *html.Node) (out []byte, err error) {
 			}
 			if t.indent == t.preBlock {
 				t.preBlock = -1
-			}
-
-			// Move across to the next sibling if there is one.
-			// If not, the loop will go upwards again.
-			if n != nil && n.NextSibling != nil {
-				n = n.NextSibling
-				break
 			}
 		}
 	}
@@ -176,34 +197,48 @@ func (t *tidy) writeString(w *bufio.Writer, s string) {
 // In valid HTML, they can't contain both types of quotes.
 // From https://github.com/golang/net/blob/master/html/render.go
 func (t *tidy) writeQuoted(w *bufio.Writer, s string) {
-	var q byte = '"'
+	var q byte
 	if strings.Contains(s, `"`) {
 		q = '\''
+	} else {
+		q = '"'
 	}
 	t.writeByte(w, q)
 	t.writeString(w, s)
 	t.writeByte(w, q)
 }
 
+// writeIndentation adds spaces for indentation.
+func (t *tidy) writeIndentation(w *bufio.Writer) {
+	for i := 0; i < t.indent; i++ {
+		t.writeString(w, "    ")
+	}
+}
+
+// writeIndentationGuide adds a comment to help follow the level of
+// indentation for <pre> tags, which have to be written without any.
+func (t *tidy) writeIndentationGuide(w *bufio.Writer, guide string) {
+	if t.indent >= 2 {
+		t.writeString(w, "<!--")
+		for i := 1; i < t.indent; i++ {
+			t.writeString(w, guide)
+		}
+		t.writeString(w, " -->")
+	}
+}
+
 // Functions for writing HTML nodes:
 
 func (t *tidy) writeComment(w *bufio.Writer, n *html.Node) {
-
-	if n.Parent != nil || n.PrevSibling != nil {
-		if t.textBlock == -1 || t.textBlock == t.indent {
-			for i := 0; i < t.indent; i++ {
-				t.writeString(w, "    ")
-			}
-		}
+	if !isVeryFirstNode(n) && t.inNormalBlock() {
+		t.writeIndentation(w)
 	}
 
 	t.writeString(w, "<!--")
 	t.writeString(w, n.Data)
 	t.writeString(w, "-->")
 
-	if t.textBlock == t.indent {
-		t.writeByte(w, '\n')
-	} else if t.textBlock == -1 && (n.Parent != nil || n.NextSibling != nil) {
+	if !isVeryLastNode(n) && t.inNormalBlock() {
 		t.writeByte(w, '\n')
 	}
 }
@@ -238,28 +273,14 @@ func (t *tidy) writeDoctype(w *bufio.Writer, n *html.Node) {
 
 func (t *tidy) writeEl(w *bufio.Writer, n *html.Node) {
 
-	if t.preBlock == -1 && n.Data == "pre" {
-		t.preBlock = t.indent
-		// Add a comment as an indentation guide.
-		if !isPreNode(getPrevElement(n)) {
-			if t.indent >= 2 {
-				t.writeString(w, "<!--")
-				for i := 1; i < t.indent; i++ {
-					t.writeString(w, " <==")
-				}
-				t.writeString(w, " -->")
+	if !isVeryFirstNode(n) {
+		if n.Data == "pre" {
+			if !isPreNode(getPrevElement(n)) {
+				t.writeIndentationGuide(w, " <==")
+				t.writeByte(w, '\n')
 			}
-			t.writeByte(w, '\n')
-		}
-	}
-
-	if t.preBlock == -1 {
-		if n.Parent != nil || n.PrevSibling != nil {
-			if t.textBlock == -1 || t.textBlock == t.indent {
-				for i := 0; i < t.indent; i++ {
-					t.writeString(w, "    ")
-				}
-			}
+		} else if !t.inPreBlock() && (!t.inTextBlock() || t.isTextBlock()) {
+			t.writeIndentation(w)
 		}
 	}
 
@@ -277,74 +298,60 @@ func (t *tidy) writeEl(w *bufio.Writer, n *html.Node) {
 	}
 	t.writeByte(w, '>')
 
-	if t.preBlock == -1 {
-		if t.textBlock == -1 && hasChild(n) {
-			t.writeByte(w, '\n')
-		}
+	if t.inNormalBlock() && hasChild(n) {
+		t.writeByte(w, '\n')
 	}
 }
 
 func (t *tidy) writeElClose(w *bufio.Writer, n *html.Node) {
-
-	if t.textBlock == -1 && t.preBlock == -1 && hasChild(n) {
-		for i := 0; i < t.indent; i++ {
-			t.writeString(w, "    ")
-		}
+	if t.inNormalBlock() && hasChild(n) {
+		t.writeIndentation(w)
 	}
+
 	if !isVoid(n) {
 		t.writeString(w, "</")
 		t.writeString(w, n.Data)
 		t.writeByte(w, '>')
 	}
 
-	if n.Data == "pre" && !isPreNode(n.NextSibling) {
-		t.writeByte(w, '\n')
-		// Add a comment as an indentation guide.
-		if t.indent >= 2 {
-			t.writeString(w, "<!--")
-			for i := 1; i < t.indent; i++ {
-				t.writeString(w, " ==>")
-			}
-			t.writeString(w, " -->")
+	if n.Data == "pre" {
+		if !isPreNode(n.NextSibling) {
+			t.writeByte(w, '\n')
+			t.writeIndentationGuide(w, " ==>")
 		}
 	}
-
-	if t.preBlock != -1 && n.Data != "pre" {
-		return
-	}
-	if n.Parent == nil && n.NextSibling == nil {
-		return
-	}
-	if t.textBlock == t.indent {
-		t.writeByte(w, '\n')
-	} else if t.textBlock == -1 && (n.Parent != nil || n.NextSibling != nil) {
-		t.writeByte(w, '\n')
+	if !isVeryLastNode(n) {
+		if n.Data == "pre" || !t.inPreBlock() {
+			if !t.inTextBlock() || t.isTextBlock() {
+				t.writeByte(w, '\n')
+			}
+		}
 	}
 }
 
 func (t *tidy) writeText(w *bufio.Writer, n *html.Node) {
-	if t.preBlock != -1 {
+	if t.inPreBlock() {
 		t.writeString(w, n.Data)
 		return
 	}
-
-	if t.textBlock == -1 {
+	if !t.inTextBlock() {
 		return
 	}
+
 	input := bytes.TrimSpace([]byte(n.Data))
 
 	if len(input) == 0 {
-		if n.PrevSibling != nil || n.NextSibling != nil {
+		if hasPrev(n) || hasNext(n) {
 			t.writeByte(w, ' ')
 			return
 		}
 	}
 
-	if n.PrevSibling != nil && unicode.IsSpace(rune(n.Data[0])) {
+	if hasPrev(n) && unicode.IsSpace(rune(n.Data[0])) {
 		t.writeByte(w, ' ')
 	}
 
-	if n.NextSibling != nil && unicode.IsSpace(rune(n.Data[len(n.Data)-1])) {
+	if hasNext(n) && unicode.IsSpace(rune(n.Data[len(n.Data)-1])) {
 		defer t.writeByte(w, ' ')
 	}
 
@@ -384,6 +391,22 @@ func findContext(n *html.Node) *html.Node {
 			}
 		}
 		n = n.Parent
+	}
+	return nil
+}
+
+// getPrevElement gets the previous sibling if it is an element,
+// or returns nil. It skips past blank text nodes during this check.
+func getPrevElement(n *html.Node) *html.Node {
+	for n != nil {
+		n = n.PrevSibling
+		if isBlankText(n) {
+			continue
+		}
+		if n == nil || n.Type != html.ElementNode {
+			return nil
+		}
+		return n
 	}
 	return nil
 }
